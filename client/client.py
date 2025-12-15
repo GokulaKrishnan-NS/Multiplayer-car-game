@@ -83,6 +83,7 @@ def show_menu(screen):
     create_btn = pygame.Rect(w//2-120, h//2+30, 240, 50)
     message = ""
     server_proc = None
+    server_failed = False
 
     while True:
         for e in pygame.event.get():
@@ -99,16 +100,27 @@ def show_menu(screen):
                     else:
                         message = "No rooms found. Try Create Room or retry."
                 if create_btn.collidepoint((mx, my)):
-                    # Launch local server and connect to localhost
-                    if server_proc is None:
-                        srv_path = os.path.join(os.path.dirname(__file__), "..", "server", "server.py")
+                    # Launch a fresh local server and connect to localhost
+                    # terminate any previous server subprocess we started
+                    if server_proc is not None:
                         try:
-                            server_proc = subprocess.Popen([sys.executable, srv_path], cwd=os.path.dirname(os.path.dirname(__file__)))
-                            time.sleep(0.5)
-                        except Exception as exc:
-                            message = f"Failed to start server: {exc}"
-                            server_proc = None
-                            continue
+                            server_proc.terminate()
+                        except Exception:
+                            pass
+                        server_proc = None
+
+                    srv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server", "server.py"))
+                    try:
+                        server_proc = subprocess.Popen([sys.executable, srv_path], cwd=os.path.dirname(os.path.dirname(__file__)))
+                        server_failed = False
+                    except Exception as exc:
+                        message = f"Failed to start server: {exc}"
+                        server_proc = None
+                        server_failed = True
+                        continue
+
+                    # wait a short while for the server to start and write the room_code file
+                    time.sleep(0.2)
                     return ("create", "127.0.0.1"), server_proc
 
         screen.fill((30,30,30))
@@ -117,7 +129,8 @@ def show_menu(screen):
         draw_text(screen, "Join Room", join_btn.center)
         draw_text(screen, "Create Room", create_btn.center)
         if message:
-            draw_text(screen, message, (screen.get_width()//2, h//2+110), size=20, color=(200,200,100))
+            msg_color = (255,100,100) if server_failed else (200,200,100)
+            draw_text(screen, message, (screen.get_width()//2, h//2+110), size=20, color=msg_color)
         pygame.display.flip()
         clock.tick(30)
 
@@ -134,7 +147,52 @@ if action == "join":
     client.connect(host)
 elif action == "create":
     # connect to localhost (server started)
+    # try to read room code file written by the server so we can show it to the host
+    room_code_display = None
+    srv_code_path = os.path.join(os.path.dirname(__file__), "..", "server", "room_code.txt")
+    # wait briefly for server to write the file
+    for _ in range(20):
+        try:
+            with open(srv_code_path, "r", encoding="utf-8") as f:
+                room_code_display = f.read().strip()
+            if room_code_display:
+                break
+        except Exception:
+            pass
+        time.sleep(0.1)
+
     client.connect(host)
+
+    # show waiting screen for host until another player joins
+    waiting_start = time.time()
+    while True:
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                pygame.quit()
+                client.running = False
+                if 'server_proc' in globals() and server_proc:
+                    try:
+                        server_proc.terminate()
+                    except Exception:
+                        pass
+                sys.exit(0)
+
+        screen.fill((30,30,30))
+        title = f"Room Code: {room_code_display or '----'}"
+        draw_text(screen, title, (screen.get_width()//2, screen.get_height()//2 - 40), size=36)
+        draw_text(screen, "Waiting for players...", (screen.get_width()//2, screen.get_height()//2 + 10), size=28)
+        pygame.display.flip()
+
+        # proceed once at least 2 players (host + someone) are present
+        if len(client.players) >= 2:
+            break
+
+        # safety timeout (optional) 60s
+        if time.time() - waiting_start > 60:
+            # continue anyway after timeout
+            break
+
+        clock.tick(10)
 
 running = True
 while running:
