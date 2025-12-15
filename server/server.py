@@ -4,6 +4,7 @@ import json
 import time
 import random
 import string
+import os
 import logging
 
 TCP_PORT = 50000
@@ -28,6 +29,13 @@ class RoomServer:
 
     def start(self):
         logger.info("Room created. Code: %s", self.code)
+        # write room code to a file so local hosts can read it
+        try:
+            path = os.path.join(os.path.dirname(__file__), "room_code.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.code)
+        except Exception:
+            logger.debug("Failed to write room code file", exc_info=True)
         threading.Thread(target=self.discovery_loop, daemon=True).start()
         threading.Thread(target=self.tcp_loop, daemon=True).start()
         self.game_loop()
