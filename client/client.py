@@ -3,6 +3,9 @@ import threading
 import json
 import pygame
 import time
+import os
+import subprocess
+import sys
 
 DISCOVERY_PORT = 50001
 TCP_PORT = 50000
@@ -68,14 +71,70 @@ pygame.init()
 screen = pygame.display.set_mode((1000, 700))
 clock = pygame.time.Clock()
 
+def draw_text(surface, text, pos, size=28, color=(255,255,255)):
+    font = pygame.font.Font(None, size)
+    s = font.render(text, True, color)
+    rect = s.get_rect(center=pos)
+    surface.blit(s, rect)
+
+def show_menu(screen):
+    w, h = screen.get_size()
+    join_btn = pygame.Rect(w//2-120, h//2-40, 240, 50)
+    create_btn = pygame.Rect(w//2-120, h//2+30, 240, 50)
+    message = ""
+    server_proc = None
+
+    while True:
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                return None, server_proc
+            if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                mx, my = e.pos
+                if join_btn.collidepoint((mx, my)):
+                    message = "Searching for rooms..."
+                    pygame.display.flip()
+                    rooms = discover_rooms()
+                    if rooms:
+                        return ("join", rooms[0]["host"]), server_proc
+                    else:
+                        message = "No rooms found. Try Create Room or retry."
+                if create_btn.collidepoint((mx, my)):
+                    # Launch local server and connect to localhost
+                    if server_proc is None:
+                        srv_path = os.path.join(os.path.dirname(__file__), "..", "server", "server.py")
+                        try:
+                            server_proc = subprocess.Popen([sys.executable, srv_path], cwd=os.path.dirname(os.path.dirname(__file__)))
+                            time.sleep(0.5)
+                        except Exception as exc:
+                            message = f"Failed to start server: {exc}"
+                            server_proc = None
+                            continue
+                    return ("create", "127.0.0.1"), server_proc
+
+        screen.fill((30,30,30))
+        pygame.draw.rect(screen, (70,70,70), join_btn)
+        pygame.draw.rect(screen, (70,70,70), create_btn)
+        draw_text(screen, "Join Room", join_btn.center)
+        draw_text(screen, "Create Room", create_btn.center)
+        if message:
+            draw_text(screen, message, (screen.get_width()//2, h//2+110), size=20, color=(200,200,100))
+        pygame.display.flip()
+        clock.tick(30)
+
 client = Client()
 
-rooms = discover_rooms()
-if rooms:
-    print("Found rooms:", rooms)
-    client.connect(rooms[0]["host"])   # auto-join first found
-else:
-    print("No rooms found.")
+# Show home screen until user chooses an action
+selection, server_proc = show_menu(screen)
+if selection is None:
+    pygame.quit()
+    sys.exit(0)
+
+action, host = selection
+if action == "join":
+    client.connect(host)
+elif action == "create":
+    # connect to localhost (server started)
+    client.connect(host)
 
 running = True
 while running:
@@ -102,3 +161,8 @@ while running:
 
 pygame.quit()
 client.running = False
+if 'server_proc' in globals() and server_proc:
+    try:
+        server_proc.terminate()
+    except Exception:
+        pass
